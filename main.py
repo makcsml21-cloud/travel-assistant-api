@@ -6,13 +6,13 @@ from yandex_cloud_ai import YandexGPT
 
 app = FastAPI()
 
-# --- ВАЖНО: CORS настроен под GitHub Pages ---
+# --- CORS: критически важно для GitHub Pages ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://makcsml21-cloud.github.io",
         "https://makcsml21-cloud.github.io/travel-assistant-ui/",
-        "*"  # запасной вариант для локальной отладки
+        "*"  # запасной вариант
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -35,7 +35,6 @@ llm = YandexGPT(api_key=YA_API_KEY, folder_id=YA_FOLDER_ID)
 async def chat(request: ChatRequest):
     messages = []
     for item in request.history:
-        # защита от битых записей в истории
         if "role" in item and "text" in item:
             messages.append({"role": item["role"], "text": item["text"]})
     messages.append({"role": "user", "text": request.message})
