@@ -6,13 +6,13 @@ import os
 
 app = FastAPI()
 
-# --- CORS: разрешаем фронтенд GitHub Pages ---
+# CORS: разрешаем фронтенд GitHub Pages
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://makcsml21-cloud.github.io",
         "https://makcsml21-cloud.github.io/travel-assistant-ui/",
-        "*"  # для локальной отладки
+        "*"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -22,42 +22,55 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
     history: list
-    model: str = "deepseek-r1:8b"  # модель по умолчанию
+    model: str = "llama-3.2-1b-instruct"  # лёгкая модель от Groq
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+BASE_URL = "https://api.groq.com/openai/v1"
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    # Формируем сообщения для Ollama
+    if not GROQ_API_KEY:
+        raise HTTPException(status_code=500, detail="GROQ_API_KEY не задан в переменных окружения")
+
     messages = []
     for item in request.history:
-        # Ожидаем формат: {"role": "...", "content": "..."}
+        # ожидаем формат: {"role": "...", "content": "..."}
         if "role" in item and "content" in item:
             messages.append({"role": item["role"], "content": item["content"]})
-    
     messages.append({"role": "user", "content": request.message})
 
     try:
         response = requests.post(
-            f"{OLLAMA_BASE_URL}/api/chat",
+            f"{BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Content-Type": "application/json"
+            },
             json={
                 "model": request.model,
                 "messages": messages,
-                "stream": False
+                "temperature": 0.7,
+                "max_tokens": 512
             },
             timeout=60
         )
         response.raise_for_status()
         data = response.json()
-        assistant_text = data.get("message", {}).get("content", "Нет ответа от ассистента.")
+
+        choices = data.get("choices", [])
+        if not choices:
+            raise HTTPException(status_code=502, detail="Пустой ответ от LLM")
+
+        assistant_text = choices[0].get("message", {}).get("content", "Нет ответа от ассистента.")
         return {"message": assistant_text}
 
-    except requests.exceptions.ConnectionError:
-        raise HTTPException(status_code=503, detail="Не удаётся подключиться к Ollama. Проверьте, запущен ли сервер.")
+    except requests.exceptions.RequestException as e:
+        print(f"LLM request error: {e}")
+        raise HTTPException(status_code=502, detail=f"Ошибка связи с LLM: {str(e)}")
     except Exception as e:
         print(f"LLM error: {e}")
-        raise HTTPException(status_code=500, detail=f"Ошибка генерации: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Внутренняя ошибка: {str(e)}")
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "service": "travel-assistant-ollama"}
+    return {"status": "ok", "service": "travel-assistant-groq"}
