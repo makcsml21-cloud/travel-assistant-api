@@ -1,88 +1,57 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import os
-import requests
+from yandex_cloud_ai import YandexGPT
 
 app = FastAPI()
 
-# --- CORS: разрешаем запросы с фронтенда GitHub Pages и локально ---
+# --- ВАЖНО: CORS настроен под GitHub Pages ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://makcsml21-cloud.github.io",
         "https://makcsml21-cloud.github.io/travel-assistant-ui/",
-        "http://127.0.0.1:8000",
-        "http://localhost:8000"
+        "*"  # запасной вариант для локальной отладки
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+class ChatRequest(BaseModel):
+    message: str
+    history: list
+
 YA_API_KEY = os.getenv("YA_API_KEY")
 YA_FOLDER_ID = os.getenv("YA_FOLDER_ID")
 
 if not YA_API_KEY or not YA_FOLDER_ID:
-    # Если переменных нет — сервис сразу падает с понятной ошибкой в логах
-    raise RuntimeError("YA_API_KEY и/или YA_FOLDER_ID не заданы в переменных окружения Render!")
+    raise ValueError("YA_API_KEY и YA_FOLDER_ID должны быть заданы в переменных окружения")
 
-YA_COMPLETION_URL = "https://llm.api.cloud.yandex.net/foundation-models/v1/foundationModels/textCompletion"
-
-def validate_user_query(query: str) -> str:
-    if not query or not query.strip():
-        raise HTTPException(status_code=400, detail="Запрос не может быть пустым.")
-    if len(query.strip()) > 2000:
-        raise HTTPException(status_code=400, detail="Слишком длинный запрос (максимум 2000 символов).")
-    return query.strip()
-
-@app.get("/health")
-def health():
-    """Простой эндпоинт для проверки, что сервис жив и переменные загружены."""
-    return {
-        "status": "ok",
-        "service": "travel-assistant-backend",
-        "has_ya_key": bool(YA_API_KEY),
-        "has_ya_folder": bool(YA_FOLDER_ID)
-    }
+llm = YandexGPT(api_key=YA_API_KEY, folder_id=YA_FOLDER_ID)
 
 @app.post("/chat")
-async def chat(payload: dict):
-    user_message = payload.get("message")
-    history = payload.get("history", [])
-
-    # Валидация запроса
-    user_message = validate_user_query(user_message)
-
-    # Формируем сообщения для YandexGPT
-    messages = [
-        {"role": item["role"], "text": item["text"]}
-        for item in history
-    ]
-    messages.append({"role": "user", "text": user_message})
-
-    body = {
-        "modelUri": f"gpt://{YA_FOLDER_ID}/yandexgpt/latest",
-        "completionOptions": {
-            "temperature": 0.7,
-            "maxTokens": 1000
-        },
-        "messages": messages
-    }
-
-    headers = {
-        "Authorization": f"Api-Key {YA_API_KEY}",
-        "Content-Type": "application/json"
-    }
+async def chat(request: ChatRequest):
+    messages = []
+    for item in request.history:
+        # защита от битых записей в истории
+        if "role" in item and "text" in item:
+            messages.append({"role": item["role"], "text": item["text"]})
+    messages.append({"role": "user", "text": request.message})
 
     try:
-        resp = requests.post(YA_COMPLETION_URL, json=body, headers=headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        assistant_text = data["result"]["alternatives"][0]["message"]["text"]
+        response = llm.generate(messages=messages)
+        alternatives = response.result.alternatives
+        if not alternatives or len(alternatives) == 0:
+            return {"message": "Не удалось получить ответ от LLM."}
+        assistant_text = alternatives[0].message.text
     except Exception as e:
-        # В реальном MVP тут логирование, но для простоты — HTTPException
-        raise HTTPException(status_code=502, detail=f"Ошибка при обращении к LLM: {str(e)}")
+        print(f"LLM error: {e}")
+        return {"message": f"Ошибка при генерации ответа: {str(e)}"}
 
-    return {
-        "message": assistant_text,
-        "history": messages + [{"role": "assistant", "text": assistant_text}]
-    }
+    return {"message": assistant_text}
+
+@app.get("/")
+async def root():
+    return {"status": "ok"}
