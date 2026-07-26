@@ -6,6 +6,7 @@ import os
 
 app = FastAPI()
 
+# CORS: разрешаем фронтенд GitHub Pages
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -24,6 +25,7 @@ class ChatRequest(BaseModel):
     model: str = "llama-3.2-1b-instruct"
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# Правильный базовый URL для Groq
 BASE_URL = "https://api.groq.com/openai/v1"
 
 @app.post("/chat")
@@ -38,8 +40,11 @@ async def chat(request: ChatRequest):
     messages.append({"role": "user", "content": request.message})
 
     try:
+        # Формируем полный URL
+        endpoint = f"{BASE_URL}/chat/completions"
+        
         response = requests.post(
-            f"{BASE_URL}/chat/completions",
+            endpoint,
             headers={
                 "Authorization": f"Bearer {GROQ_API_KEY}",
                 "Content-Type": "application/json"
