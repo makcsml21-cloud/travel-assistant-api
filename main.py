@@ -6,7 +6,6 @@ import os
 
 app = FastAPI()
 
-# CORS: разрешаем фронтенд GitHub Pages
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -22,7 +21,7 @@ app.add_middleware(
 class ChatRequest(BaseModel):
     message: str
     history: list
-    model: str = "llama-3.2-1b-instruct"  # лёгкая модель от Groq
+    model: str = "llama-3.2-1b-instruct"
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BASE_URL = "https://api.groq.com/openai/v1"
@@ -34,7 +33,6 @@ async def chat(request: ChatRequest):
 
     messages = []
     for item in request.history:
-        # ожидаем формат: {"role": "...", "content": "..."}
         if "role" in item and "content" in item:
             messages.append({"role": item["role"], "content": item["content"]})
     messages.append({"role": "user", "content": request.message})
