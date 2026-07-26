@@ -5,7 +5,7 @@ import requests
 
 app = FastAPI()
 
-# --- CORS: разрешаем запросы с фронтенда и локально ---
+# --- CORS: разрешаем запросы с фронтенда GitHub Pages и локально ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -22,34 +22,43 @@ YA_API_KEY = os.getenv("YA_API_KEY")
 YA_FOLDER_ID = os.getenv("YA_FOLDER_ID")
 
 if not YA_API_KEY or not YA_FOLDER_ID:
-    raise RuntimeError("YA_API_KEY и/или YA_FOLDER_ID не заданы в переменных окружения!")
+    # Если переменных нет — сервис сразу падает с понятной ошибкой в логах
+    raise RuntimeError("YA_API_KEY и/или YA_FOLDER_ID не заданы в переменных окружения Render!")
 
 YA_COMPLETION_URL = "https://llm.api.cloud.yandex.net/foundation-models/v1/foundationModels/textCompletion"
 
 def validate_user_query(query: str) -> str:
-    """Простая семантическая валидация: не пустой, не слишком длинный, без явного мусора."""
     if not query or not query.strip():
         raise HTTPException(status_code=400, detail="Запрос не может быть пустым.")
     if len(query.strip()) > 2000:
         raise HTTPException(status_code=400, detail="Слишком длинный запрос (максимум 2000 символов).")
     return query.strip()
 
+@app.get("/health")
+def health():
+    """Простой эндпоинт для проверки, что сервис жив и переменные загружены."""
+    return {
+        "status": "ok",
+        "service": "travel-assistant-backend",
+        "has_ya_key": bool(YA_API_KEY),
+        "has_ya_folder": bool(YA_FOLDER_ID)
+    }
+
 @app.post("/chat")
 async def chat(payload: dict):
     user_message = payload.get("message")
-    history = payload.get("history", [])  # список {"role": "user"/"assistant", "text": "..."}
+    history = payload.get("history", [])
 
-    # Валидация
+    # Валидация запроса
     user_message = validate_user_query(user_message)
 
-    # Формируем контекст (история + новый запрос)
+    # Формируем сообщения для YandexGPT
     messages = [
         {"role": item["role"], "text": item["text"]}
         for item in history
     ]
     messages.append({"role": "user", "text": user_message})
 
-    # Запрос к YandexGPT
     body = {
         "modelUri": f"gpt://{YA_FOLDER_ID}/yandexgpt/latest",
         "completionOptions": {
@@ -70,14 +79,10 @@ async def chat(payload: dict):
         data = resp.json()
         assistant_text = data["result"]["alternatives"][0]["message"]["text"]
     except Exception as e:
-        # В реальном MVP тут логирование и более детальные ошибки
+        # В реальном MVP тут логирование, но для простоты — HTTPException
         raise HTTPException(status_code=502, detail=f"Ошибка при обращении к LLM: {str(e)}")
 
     return {
         "message": assistant_text,
         "history": messages + [{"role": "assistant", "text": assistant_text}]
     }
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "service": "travel-assistant-backend"}
